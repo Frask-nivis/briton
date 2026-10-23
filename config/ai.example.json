@@ -1,0 +1,10 @@
+{
+  "enabled": false,
+  "provider": "",
+  "model": "",
+  "api_key_env": "AI_API_KEY",
+  "prompt_file": "ai/prompts/draft-answers.md",
+  "input_dir": "captures",
+  "output_dir": "answers",
+  "require_human_review": true
+}
