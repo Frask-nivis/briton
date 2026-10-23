@@ -1,3 +1,28 @@
+# Setup repo
+
+Struktur tambahan: `answers/` untuk jawaban lokal, `captures/` untuk soal/screenshot, `examples/` untuk contoh yang dilacak Git, `config/` dan `ai/` untuk template AI, serta `scripts/` untuk installer. Contoh di root tetap tersedia agar perintah lama tidak rusak.
+
+## Mulai dari GitHub (Windows)
+
+Butuh Git dan Python 3.10+. Alternatif tanpa Git: Code > Download ZIP, ekstrak, lalu buka PowerShell di folder hasil ekstrak.
+
+```powershell
+git clone https://github.com/Frask-nivis/briton.git
+cd briton
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup.ps1
+.\.venv\Scripts\python.exe briton.py login
+.\.venv\Scripts\python.exe briton.py capture --url "https://learn.onbriton.com/course/learn/162?group=817" --out captures/questions817.json
+.\.venv\Scripts\python.exe briton.py apply answers/match817.json --allow-retry
+```
+
+Installer mengunduh dependensi dan Chromium, membuat folder kerja, lalu menyalin contoh tanpa menimpa jawaban/config lokal yang sudah ada. Periksa `answers/match817.json` dan set `reviewed:true` hanya setelah memeriksa materi. Jangan menjalankan apply sebelum itu. Perintah apply di atas tidak mengirim jawaban.
+
+AI masih **template**, bukan fitur yang sudah aktif. Lihat [panduan AI](ai/README.md). Workflow GitHub Actions belum berhasil diunggah: API menolak penulisan `.github/workflows/check.yml` dengan error 404. Template workflow disiapkan terpisah. Setelah dipasang, workflow tersebut hanya memeriksa sintaks Python, JSON, CLI, dan PowerShell; tidak login ke Brit On atau mengirim jawaban. Pemeriksaan lokal sintaks Python, JSON, dan PowerShell sudah lolos, tetapi instalasi dan browser end-to-end belum diuji.
+
+File jawaban, capture, screenshot hasil, konfigurasi lokal, dan `.env` diabaikan Git. Ini tidak menghapus file yang sudah pernah di-commit; periksa `git status` sebelum push dan jangan pakai `git add -f` untuk data pribadi.
+
+---
+
 # Brit On — Python Playwright
 
 Dibuat berdasarkan inspeksi lesson 56, aktivitas 804 (input) dan 817 (pencocokan). Ini helper browser dengan jawaban yang kamu periksa, bukan AI yang mengerjakan seluruh course sendiri. Skills Review tidak didukung. Script tidak mengubah nilai/progress lewat API.
