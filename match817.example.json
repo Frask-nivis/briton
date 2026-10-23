@@ -1,0 +1,41 @@
+{
+  "reviewed": false,
+  "activities": [
+    {
+      "url": "https://learn.onbriton.com/course/learn/162?group=817",
+      "retry": true,
+      "actions": [
+        {
+          "type": "match",
+          "qid": "q2431",
+          "question": "What can you infer about Sam’s interest in culture?",
+          "answer": "He likes learning about local traditions."
+        },
+        {
+          "type": "match",
+          "qid": "q2431",
+          "question": "What can we guess about Anna’s personality?",
+          "answer": "She enjoys science and nature."
+        },
+        {
+          "type": "match",
+          "qid": "q2431",
+          "question": "What might be one reason Rachel enjoyed her trip?",
+          "answer": "She likes meeting new animals and seeing art."
+        },
+        {
+          "type": "match",
+          "qid": "q2431",
+          "question": "What do all three travelers have in common?",
+          "answer": "They all visited unique and cultural places."
+        },
+        {
+          "type": "match",
+          "qid": "q2431",
+          "question": "What can you infer about the travelers overall?",
+          "answer": "They enjoy learning through experiences."
+        }
+      ]
+    }
+  ]
+}
