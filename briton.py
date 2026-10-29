@@ -9,6 +9,7 @@ import re
 from pathlib import Path
 from urllib.parse import urlparse
 from playwright.async_api import async_playwright, expect
+from quiz_checks import format_issues, validate_complete, wait_for_feedback
 
 BASE = 'https://learn.onbriton.com'
 ROOT = Path(__file__).resolve().parent
@@ -99,6 +100,8 @@ async def apply_action(page, action):
             raise ValueError('Form harus miniQuizForm')
         loc = await unique(form.locator(action['selector']))
         if kind == 'fill':
+            for warning in format_issues(action['value'], action.get('format')):
+                print('PERIKSA FORMAT:', warning)
             await loc.fill(action['value'])
             await expect(loc).to_have_value(action['value'])
         elif kind == 'check':
@@ -140,33 +143,43 @@ async def apply_plan(page, filename, submit, allow_retry):
             raise ValueError('Tidak ada jawaban. Berhenti tanpa submit.')
         for action in actions:
             await apply_action(page, action)
+        gid = re.search(r'(?:^|&)group=(\d+)(?:&|$)', urlparse(url).query)
+        if not gid:
+            raise ValueError('URL harus menyertakan group')
+        form_id = 'miniQuizForm' + gid[1]
+        form = await unique(page.locator('#' + form_id))
+        await validate_complete(form)
         await page.screenshot(path=str(ROOT / f'filled-{n}.png'), full_page=True)
         if not submit:
             print(f'[{n}] Terisi dan dicek; BELUM dikirim. Screenshot: filled-{n}.png')
             await asyncio.to_thread(input, 'Periksa browser; Enter untuk melanjutkan... ')
             continue
-        form_ids = {a['form'] for a in actions if 'form' in a}
-        gid = re.search(r'(?:^|&)group=(\d+)(?:&|$)', urlparse(url).query)
-        if not gid:
-            raise ValueError('URL harus menyertakan group')
-        form = page.locator('#miniQuizForm' + gid[1])
-        await unique(form)
-        # Text/input completeness; drop and choice correctness still depends on reviewed plan.
-        for inp in await form.locator('input[type=text],textarea').all():
-            if await inp.is_visible() and not (await inp.input_value()).strip():
-                raise RuntimeError('Ada isian kosong; submit dibatalkan.')
-        for slot in await form.locator('.LS-lesson-drop-match-content,.LS-lesson-drop-category-content').all():
-            if await slot.is_visible() and not await slot.locator('.LS-lesson-drag-item,.LS-lesson-drag-match-wrapper').count():
-                raise RuntimeError('Ada drop slot kosong; submit dibatalkan.')
+        if re.search(r'Your answer\s*:', await form.inner_text()):
+            raise RuntimeError('Feedback lama masih terlihat; jangan submit ulang sebelum memeriksa status aktivitas.')
         button = await unique(form.locator('#quizSubmitBtn' + gid[1]))
         confirm = await asyncio.to_thread(input, f'Kirim jawaban ke {url}? Ketik KIRIM: ')
         if confirm != 'KIRIM':
             raise RuntimeError('Submit dibatalkan pengguna.')
-        await button.click()
-        # Do not retry submit on timeout: server may already have accepted it.
+        # Recheck after human review in case fields changed while waiting.
+        await validate_complete(form)
+        if re.search(r'Your answer\s*:', await form.inner_text()):
+            raise RuntimeError('Aktivitas sudah memiliki feedback; submit dibatalkan.')
+        report_path = ROOT / f'after-submit-{n}.json'
+        try:
+            await button.click()
+            report = await wait_for_feedback(page, form_id)
+        except Exception as exc:
+            save(report_path, {'url': url, 'status': 'unknown', 'error_type': type(exc).__name__,
+                               'note': 'Submit mungkin sudah diterima. Periksa browser; JANGAN kirim ulang otomatis.'})
+            await page.screenshot(path=str(ROOT / f'after-submit-{n}.png'), full_page=True)
+            raise RuntimeError('Hasil submit belum dapat dipastikan; proses dihentikan tanpa kirim ulang.') from exc
+        report.update({'url': page.url, 'status': 'feedback_received'})
+        save(report_path, report)
         await page.screenshot(path=str(ROOT / f'after-submit-{n}.png'), full_page=True)
-        print('Submit diklik; periksa hasil browser. Tidak mengklaim skor sebelum hasil terlihat.')
-        await asyncio.to_thread(input, 'Periksa hasil; Enter untuk melanjutkan... ')
+        for item in report['feedback']:
+            print(item['status'] + ': ' + item['text'])
+        print(f'Feedback tersimpan: {report_path}. Skor tidak ditebak dari jumlah teks yang cocok.')
+        await asyncio.to_thread(input, 'Periksa feedback; Enter untuk melanjutkan... ')
 
 
 async def main():
