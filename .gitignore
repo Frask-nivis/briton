@@ -28,3 +28,8 @@ after-submit-*.json
 *.checkpoint.json
 *.checkpoint.json.tmp
 checkpoints/
+
+# Never commit local account credentials
+credentials.json
+credentials.*.json
+!config/credentials.example.json
