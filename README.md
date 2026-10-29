@@ -96,7 +96,42 @@ Laporan JSON menyimpan teks mentah serta status feedback: correct/incorrect hany
 
 Jalankan tes tanpa login atau pengiriman jawaban:
 
-    python -m unittest -v test_quiz_checks
+    python -m unittest -v test_quiz_checks test_progress test_resume_flow
     python -m py_compile briton.py quiz_checks.py test_quiz_checks.py
 
-18 tes regresi untuk validasi, format, parsing feedback, dan propagasi timeout telah lulus. Pembaca DOM juga diuji read-only pada halaman Brit On group 753 dan mendeteksi lima slot kosong. Instalasi serta alur Playwright login/fill/submit menyeluruh belum diuji; tes unit bukan bukti submit langsung berhasil. Simpan briton.py dan quiz_checks.py dalam folder yang sama. Laporan hasil tetap lokal dan diabaikan Git; jangan membagikannya tanpa memeriksa data pribadi.
+18 tes regresi untuk validasi, format, parsing feedback, dan propagasi timeout telah lulus. Pembaca DOM juga diuji read-only pada halaman Brit On group 753 dan mendeteksi lima slot kosong. Instalasi serta alur Playwright login/fill/submit menyeluruh belum diuji; tes unit bukan bukti submit langsung berhasil. Simpan briton.py, quiz_checks.py, progress.py, dan existing_answers.py dalam folder yang sama. Laporan hasil tetap lokal dan diabaikan Git; jangan membagikannya tanpa memeriksa data pribadi.
+
+## Status aktivitas dan melanjutkan pekerjaan
+
+Alur apply sekarang memeriksa status di situs sebelum mengisi setiap aktivitas dalam file jawaban. Cakupannya hanya daftar activities pada file tersebut, bukan seluruh course. Urutan mengikuti file jawaban yang reviewed:true.
+
+Cek status tanpa mengisi atau mengirim:
+
+    python briton.py apply answers/unit3.json --status-only
+
+Isi aktivitas pertama yang belum dinilai, tanpa Submit:
+
+    python briton.py apply answers/unit3.json --allow-retry
+
+Lanjutkan dengan pemeriksaan dan konfirmasi KIRIM untuk setiap aktivitas:
+
+    python briton.py apply answers/unit3.json --allow-retry --submit
+
+--allow-retry tidak menekan tombol Retry, tidak mereset jawaban, dan tidak membuktikan aktivitas sudah selesai. Tanpa --submit, proses berhenti setelah satu aktivitas terisi agar tidak meninggalkan isian belum dikirim untuk pindah ke aktivitas berikutnya. Browser lokal tetap ditutup saat proses berakhir; checkpoint tidak menyimpan jawaban, dan isian yang tidak disimpan situs mungkin harus diisi kembali dari file terverifikasi saat dijalankan lagi.
+
+Status yang dikenali:
+
+- unanswered: kontrol didukung masih kosong, belum ada feedback penilaian.
+- filled_unsubmitted: ada isian/pasangan/pilihan, belum ada bukti penilaian.
+- graded: feedback hasil penilaian terlihat dan tombol Submit tidak masih terlihat. Aktivitas dilewati tanpa Retry atau Submit.
+- uncertain atau unsupported: bukti tidak cukup atau struktur belum didukung; berhenti, bukan menebak status.
+
+Seluruh action diperiksa sebelum ada pengisian. Isian yang sama dipertahankan. Isian teks berbeda (termasuk spasi yang sudah ada), radio yang punya pilihan lain, dropdown yang sudah memilih jawaban lain, atau slot pencocokan yang berisi pasangan berbeda akan menghentikan proses tanpa menimpa jawaban lama. Kontrol dicek lagi sebelum ditulis dan sesudah KIRIM. Tidak ada opsi paksa menimpa.
+
+Checkpoint default berada di sebelah file jawaban, misalnya answers/unit3.checkpoint.json. Gunakan --checkpoint checkpoints/unit3.json jika ingin path lain. Isinya hanya URL aktivitas, status, alasan ringkas, waktu, dan hash file rencana; tidak ada jawaban, password, atau cookie. Penulisan menggunakan file sementara lalu replace. Gunakan satu proses untuk satu checkpoint/profil browser pada satu waktu.
+
+Jalankan perintah yang sama untuk melanjutkan. Skrip membuka kembali aktivitas dalam urutan rencana dan membaca ulang status situs; checkpoint bukan alasan untuk menganggap nilai berhasil. Jika checkpoint pernah mencatat graded tetapi feedback situs tidak terlihat lagi, skrip berhenti untuk pemeriksaan manual. Ini sengaja konservatif karena sebagian halaman mungkin tidak menampilkan ulang feedback setelah dimuat kembali.
+
+Sebelum klik Submit, checkpoint submission_pending disimpan. Jika klik atau feedback gagal, status menjadi submission_unknown. Pada proses berikutnya, jika bukti penilaian terlihat, status diperbarui ke graded dan aktivitas dilewati. Jika belum terlihat, proses berhenti tanpa kirim ulang. Jangan menghapus checkpoint atau mengganti path hanya untuk melewati perlindungan ini; periksa riwayat/nilai pada situs terlebih dahulu. Checkpoint terikat hash seluruh file jawaban: perubahan rencana membutuhkan checkpoint lain setelah memastikan tidak ada pengiriman yang belum pasti.
+
+45 tes unit dan alur dengan browser tiruan lulus, termasuk melewati aktivitas dinilai, membatalkan KIRIM, dry-run, konflik jawaban, dan mencegah pengiriman ulang setelah klik gagal. Snapshot DOM nyata group 753 diuji read-only: lima slot kosong dan tombol Submit masih terlihat. Ini bukan pengujian end-to-end Playwright; tidak ada jawaban atau Submit yang dikirim ke Brit On selama pengembangan fitur resume.
