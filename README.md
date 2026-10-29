@@ -58,7 +58,7 @@ Untuk mengirim jawaban yang sudah diperiksa:
 .\.venv\Scripts\python.exe briton.py apply match817.example.json --allow-retry --submit
 ```
 
-Tetap ada konfirmasi KIRIM per aktivitas. Setelah klik Submit, periksa hasil di browser; script tidak menganggap klik sama dengan keberhasilan atau skor sempurna. Jangan ulang submit saat jaringan bermasalah sebelum mengecek hasil.
+Tetap ada konfirmasi KIRIM per aktivitas. Setelah klik Submit, script menunggu feedback yang terlihat di form (maksimal 30 detik), menyimpan teks hasil ke `after-submit-N.json`, lalu menunggu pemeriksaanmu. Jika klik atau pembacaan hasil gagal, status disimpan sebagai `unknown` dan proses berhenti tanpa kirim ulang. Klik tidak dianggap bukti keberhasilan atau skor sempurna.
 
 ## Format action lain
 
@@ -73,3 +73,30 @@ Isi semua field aktivitas, bukan hanya field pertama. Jenis check (radio/checkbo
 ## Batas dan privasi
 
 Auto-wait Playwright dipakai tanpa sleep tetap. Drop dicek dari elemen jawaban yang benar-benar berpindah, bukan posisi kursor. Input text dan struktur match diperiksa langsung pada situs; handler check/select disediakan tetapi belum diuji pada contoh pilihan ganda situs ini. Belum ada uji end-to-end menggunakan Playwright lokal atau submit aktual. Perubahan struktur situs bisa memerlukan pembaruan selector. Kategori drag-and-drop, soal rusak, dan pemahaman audio otomatis belum diimplementasikan. capture menyimpan teks halaman dan screenshot lokal yang mungkin memuat nama akun; jangan bagikan tanpa pemeriksaan. Gunakan sesuai aturan penyelenggara course.
+
+## Validasi sebelum kirim
+
+Semua radio yang terlihat dan aktif diperiksa per grup name: tepat satu pilihan harus dipilih. Semua dropdown yang terlihat dan aktif harus punya pilihan nonkosong, bukan placeholder. Isian teks dan drop slot juga diperiksa. Kontrol tersembunyi atau disabled diabaikan. Pemeriksaan berjalan setelah pengisian dan diulang sesudah konfirmasi KIRIM, tepat sebelum Submit. Skrip menolak mengirim ulang form yang sudah menampilkan feedback lama.
+
+## Format jawaban: peringatan, bukan koreksi otomatis
+
+Jawaban tetap ditulis persis dari file. Spasi di tepi, karakter kontrol, kutip melengkung, serta tanda baca akhir memunculkan peringatan. Peringatan bukan berarti jawabannya salah: tanda tanya atau seru bisa memang diperlukan. Skrip tidak menghapus titik dan tidak mengganti apostrof secara otomatis.
+
+Jika format untuk soal sudah kamu pastikan, tambahkan aturan opsional pada action fill:
+
+```json
+{"type":"fill","form":"#miniQuizForm753","selector":"input[name='CONTOH']","value":"Anna packed her suitcase last night","format":{"terminal_punctuation":"none","expected_literal":"Anna packed her suitcase last night"}}
+```
+
+Selector di atas hanya contoh, bukan selector soal 753. Ambil selector asli dari capture. terminal_punctuation menerima preserve, none, titik, tanda tanya, atau tanda seru. expected_literal memeriksa kesamaan seluruh teks secara persis. Pelanggaran aturan eksplisit menghentikan proses, bukan mengubah jawaban diam-diam. Konfirmasi KIRIM tetap wajib.
+
+## Membaca feedback dan menjalankan tes
+
+Laporan JSON menyimpan teks mentah serta status feedback: correct/incorrect hanya untuk pernyataan eksplisit situs. exact_match/different_text hanya menunjukkan kesamaan teks Your answer dan Correct; ini bukan perhitungan skor. Feedback multiline dipertahankan di raw_text. Perbedaan apostrof atau tanda baca tidak dinormalisasi. Periksa kunci yang bertentangan dengan materi secara manual.
+
+Jalankan tes tanpa login atau pengiriman jawaban:
+
+    python -m unittest -v test_quiz_checks
+    python -m py_compile briton.py quiz_checks.py test_quiz_checks.py
+
+18 tes regresi untuk validasi, format, parsing feedback, dan propagasi timeout telah lulus. Pembaca DOM juga diuji read-only pada halaman Brit On group 753 dan mendeteksi lima slot kosong. Instalasi serta alur Playwright login/fill/submit menyeluruh belum diuji; tes unit bukan bukti submit langsung berhasil. Simpan briton.py dan quiz_checks.py dalam folder yang sama. Laporan hasil tetap lokal dan diabaikan Git; jangan membagikannya tanpa memeriksa data pribadi.
