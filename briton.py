@@ -9,7 +9,9 @@ import re
 from pathlib import Path
 from urllib.parse import urlparse
 from playwright.async_api import async_playwright, expect
-from quiz_checks import format_issues, validate_complete, wait_for_feedback
+from quiz_checks import format_issues, validate_complete, wait_for_feedback, SNAPSHOT_JS
+from progress import Checkpoint, classify, should_block_resume
+from existing_answers import inspect_all, inspect_action
 
 BASE = 'https://learn.onbriton.com'
 ROOT = Path(__file__).resolve().parent
@@ -129,57 +131,97 @@ async def apply_action(page, action):
         raise ValueError('Jenis action tidak didukung: ' + kind)
 
 
-async def apply_plan(page, filename, submit, allow_retry):
+async def apply_plan(page, filename, submit, allow_retry, checkpoint_path=None, status_only=False):
     plan = json.loads(Path(filename).read_text(encoding='utf-8-sig'))
     if plan.get('reviewed') is not True:
         raise ValueError('Periksa jawaban, lalu set reviewed: true sebelum menjalankan.')
+    checkpoint = Checkpoint(checkpoint_path or str(Path(filename).with_suffix('.checkpoint.json')), plan)
+    print('Checkpoint:', checkpoint.path)
     for n, activity in enumerate(plan['activities'], 1):
         url = valid_url(activity['url'], r'/course/learn/\d+')
-        if activity.get('retry') is not False and not allow_retry:
-            raise ValueError('Status retry belum dipastikan. Set retry:false hanya jika belum dikerjakan, atau gunakan --allow-retry.')
-        await navigate(page, url)
-        actions = activity.get('actions', [])
-        if not actions:
-            raise ValueError('Tidak ada jawaban. Berhenti tanpa submit.')
-        for action in actions:
-            await apply_action(page, action)
-        gid = re.search(r'(?:^|&)group=(\d+)(?:&|$)', urlparse(url).query)
-        if not gid:
-            raise ValueError('URL harus menyertakan group')
-        form_id = 'miniQuizForm' + gid[1]
-        form = await unique(page.locator('#' + form_id))
-        await validate_complete(form)
-        await page.screenshot(path=str(ROOT / f'filled-{n}.png'), full_page=True)
-        if not submit:
-            print(f'[{n}] Terisi dan dicek; BELUM dikirim. Screenshot: filled-{n}.png')
-            await asyncio.to_thread(input, 'Periksa browser; Enter untuk melanjutkan... ')
-            continue
-        if re.search(r'Your answer\s*:', await form.inner_text()):
-            raise RuntimeError('Feedback lama masih terlihat; jangan submit ulang sebelum memeriksa status aktivitas.')
-        button = await unique(form.locator('#quizSubmitBtn' + gid[1]))
-        confirm = await asyncio.to_thread(input, f'Kirim jawaban ke {url}? Ketik KIRIM: ')
-        if confirm != 'KIRIM':
-            raise RuntimeError('Submit dibatalkan pengguna.')
-        # Recheck after human review in case fields changed while waiting.
-        await validate_complete(form)
-        if re.search(r'Your answer\s*:', await form.inner_text()):
-            raise RuntimeError('Aktivitas sudah memiliki feedback; submit dibatalkan.')
-        report_path = ROOT / f'after-submit-{n}.json'
         try:
-            await button.click()
-            report = await wait_for_feedback(page, form_id)
-        except Exception as exc:
-            save(report_path, {'url': url, 'status': 'unknown', 'error_type': type(exc).__name__,
-                               'note': 'Submit mungkin sudah diterima. Periksa browser; JANGAN kirim ulang otomatis.'})
+            gid = re.search(r'(?:^|&)group=(\d+)(?:&|$)', urlparse(url).query)
+            if not gid:
+                raise ValueError('URL harus menyertakan group')
+            form_id = 'miniQuizForm' + gid[1]
+            await navigate(page, url)
+            form = await unique(page.locator('#' + form_id))
+            live = classify(await form.evaluate(SNAPSHOT_JS), await form.inner_text())
+            previous = checkpoint.state(url)
+            print(f'[{n}] {live}: {url}')
+            if live == 'graded':
+                checkpoint.record(url, 'graded', 'Feedback penilaian terlihat di form situs')
+                print('Dilewati: sudah dinilai. Tidak menekan Retry atau Submit.')
+                continue
+            if should_block_resume(previous, live):
+                raise RuntimeError('Submit sebelumnya belum pasti. Periksa hasil di situs; tidak akan kirim ulang.')
+            if previous == 'graded':
+                raise RuntimeError('Checkpoint mencatat sudah dinilai tetapi feedback situs tidak terlihat; perlu pemeriksaan.')
+            if live in ('uncertain','unsupported'):
+                raise RuntimeError('Status/jenis aktivitas belum dapat dipastikan dari form yang terlihat')
+            if status_only:
+                checkpoint.record(url, live, 'Inspeksi status saja; tidak ada pengisian atau submit')
+                continue
+            # Retry is never evidence of completion; retain the explicit retry permission gate.
+            if activity.get('retry') is not False and not allow_retry:
+                raise RuntimeError('Status retry belum dipastikan; gunakan --allow-retry jika diizinkan.')
+            actions = activity.get('actions', [])
+            if not actions:
+                raise ValueError('Tidak ada jawaban terverifikasi untuk aktivitas ini')
+            for action in actions:
+                if action['type'] == 'fill':
+                    for warning in format_issues(action['value'], action.get('format')):
+                        print('PERIKSA FORMAT:', warning)
+            states = await inspect_all(page, actions, form_id)
+            checkpoint.record(url, 'filling', 'Semua action lolos pemeriksaan konflik awal')
+            for action, state in zip(actions, states):
+                # Recheck immediately before a write in case the user changed the page.
+                current = await inspect_action(page, action, form_id)
+                if current != 'same':
+                    await apply_action(page, action)
+            await validate_complete(form)
+            checkpoint.record(url, 'filled_unsubmitted', 'Semua isian lengkap; belum dikirim')
+            await page.screenshot(path=str(ROOT / f'filled-{n}.png'), full_page=True)
+            if not submit:
+                print(f'[{n}] Terisi dan dicek; BELUM dikirim. Jalankan lagi dengan --submit untuk melanjutkan.')
+                return  # Do not navigate away from unsent work.
+            if re.search(r'Your answer\s*:', await form.inner_text()):
+                raise RuntimeError('Feedback sudah terlihat; submit dibatalkan.')
+            button = await unique(form.locator('#quizSubmitBtn' + gid[1]))
+            confirm = await asyncio.to_thread(input, f'Kirim jawaban ke {url}? Ketik KIRIM: ')
+            if confirm != 'KIRIM':
+                print('Submit dibatalkan. Checkpoint terisi-belum-dikirim dipertahankan.')
+                return
+            await inspect_all(page, actions, form_id)
+            await validate_complete(form)
+            if re.search(r'Your answer\s*:', await form.inner_text()):
+                raise RuntimeError('Aktivitas sudah memiliki feedback; submit dibatalkan.')
+            report_path = ROOT / f'after-submit-{n}.json'
+            # Persist before the click: a crash between click and feedback must not resend.
+            checkpoint.record(url, 'submission_pending', 'Konfirmasi KIRIM diterima; hasil belum dipastikan')
+            try:
+                await button.click()
+                report = await wait_for_feedback(page, form_id)
+            except Exception as exc:
+                checkpoint.record(url, 'submission_unknown', 'Hasil klik/feedback belum pasti; jangan kirim ulang')
+                save(report_path, {'url':url, 'status':'unknown', 'error_type':type(exc).__name__})
+                raise RuntimeError('Hasil submit belum pasti; proses berhenti tanpa kirim ulang.') from exc
+            report.update({'url':page.url, 'status':'feedback_received'})
+            save(report_path, report)
+            if classify(await form.evaluate(SNAPSHOT_JS), await form.inner_text()) != 'graded':
+                checkpoint.record(url, 'submission_unknown', 'Feedback ada tetapi status penilaian belum pasti')
+                raise RuntimeError('Feedback belum dapat dipastikan sebagai hasil penilaian')
+            checkpoint.record(url, 'graded', 'Feedback hasil submit telah terlihat dan tersimpan')
             await page.screenshot(path=str(ROOT / f'after-submit-{n}.png'), full_page=True)
-            raise RuntimeError('Hasil submit belum dapat dipastikan; proses dihentikan tanpa kirim ulang.') from exc
-        report.update({'url': page.url, 'status': 'feedback_received'})
-        save(report_path, report)
-        await page.screenshot(path=str(ROOT / f'after-submit-{n}.png'), full_page=True)
-        for item in report['feedback']:
-            print(item['status'] + ': ' + item['text'])
-        print(f'Feedback tersimpan: {report_path}. Skor tidak ditebak dari jumlah teks yang cocok.')
-        await asyncio.to_thread(input, 'Periksa feedback; Enter untuk melanjutkan... ')
+            for item in report['feedback']:
+                print(item['status'] + ': ' + item['text'])
+            await asyncio.to_thread(input, 'Periksa feedback; Enter untuk lanjut ke aktivitas berikutnya... ')
+        except (Exception, KeyboardInterrupt):
+            # Preserve critical evidence; a generic error must never clear uncertain submission.
+            if checkpoint.state(url) not in ('submission_pending','submission_unknown','graded'):
+                checkpoint.record(url, 'blocked', 'Proses terhalang; periksa pesan terminal dan situs sebelum melanjutkan')
+            print('Berhenti. Checkpoint tersimpan:', checkpoint.path)
+            raise
 
 
 async def main():
@@ -190,7 +232,11 @@ async def main():
     scan = sub.add_parser('scan'); scan.add_argument('--url', required=True); scan.add_argument('--out', default='activities.json')
     cap = sub.add_parser('capture'); cap.add_argument('--url', required=True); cap.add_argument('--out', default='questions.json')
     run = sub.add_parser('apply'); run.add_argument('plan'); run.add_argument('--submit', action='store_true'); run.add_argument('--allow-retry', action='store_true')
+    run.add_argument('--checkpoint', help='Path checkpoint, terikat pada isi file jawaban')
+    run.add_argument('--status-only', action='store_true', help='Cek status tanpa mengisi atau submit')
     args = ap.parse_args()
+    if args.command == 'apply' and args.status_only and args.submit:
+        ap.error('--status-only tidak boleh digabung --submit')
     async with async_playwright() as pw:
         context = await pw.chromium.launch_persistent_context(args.profile, headless=False, viewport={'width':1360,'height':900})
         # Keep audio/video and JavaScript: necessary for listening and interactive quizzes.
@@ -205,7 +251,7 @@ async def main():
                 print('Profil browser tersimpan lokal. Jangan dibagikan.')
             elif args.command == 'scan': await inventory(page, args.url, args.out)
             elif args.command == 'capture': await capture(page, args.url, args.out)
-            elif args.command == 'apply': await apply_plan(page, args.plan, args.submit, args.allow_retry)
+            elif args.command == 'apply': await apply_plan(page, args.plan, args.submit, args.allow_retry, args.checkpoint, args.status_only)
         except Exception:
             await page.screenshot(path=str(ROOT / 'error.png'), full_page=True)
             raise
