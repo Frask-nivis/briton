@@ -20,3 +20,6 @@ test-results/
 /filled-*.png
 /after-submit-*.png
 /error.png
+
+# Local quiz feedback reports may contain personal course content
+after-submit-*.json
