@@ -40,7 +40,7 @@ python -m venv .venv
 .\.venv\Scripts\python.exe briton.py capture --url "https://learn.onbriton.com/course/learn/162?group=817" --out questions817.json
 ```
 
-Chromium perlu diunduh saat instalasi; tidak perlu Selenium, ChromeDriver, atau API key. Login sendiri satu kali di browser yang muncul. Sesi Strawberry tidak otomatis ikut. Profil berisi sesi login disimpan di %LOCALAPPDATA%/BritonHelper/browser-profile, di luar folder script/sinkronisasi. Jangan bagikan profil tersebut. Tutup proses script sebelumnya sebelum menjalankan lagi.
+Chromium perlu diunduh saat instalasi; tidak perlu Selenium, ChromeDriver, atau API key. Login dapat memakai kredensial lokal otomatis (lihat bagian Login otomatis) atau dilakukan manual dengan briton.py login --manual. Sesi Strawberry tidak otomatis ikut. Profil berisi sesi login disimpan di %LOCALAPPDATA%/BritonHelper/browser-profile, di luar folder script/sinkronisasi. Jangan bagikan profil tersebut. Tutup proses script sebelumnya sebelum menjalankan lagi.
 
 ## Mengisi pencocokan 817
 
@@ -99,7 +99,7 @@ Jalankan tes tanpa login atau pengiriman jawaban:
     python -m unittest -v test_quiz_checks test_progress test_resume_flow
     python -m py_compile briton.py quiz_checks.py test_quiz_checks.py
 
-18 tes regresi untuk validasi, format, parsing feedback, dan propagasi timeout telah lulus. Pembaca DOM juga diuji read-only pada halaman Brit On group 753 dan mendeteksi lima slot kosong. Instalasi serta alur Playwright login/fill/submit menyeluruh belum diuji; tes unit bukan bukti submit langsung berhasil. Simpan briton.py, quiz_checks.py, progress.py, dan existing_answers.py dalam folder yang sama. Laporan hasil tetap lokal dan diabaikan Git; jangan membagikannya tanpa memeriksa data pribadi.
+18 tes regresi untuk validasi, format, parsing feedback, dan propagasi timeout telah lulus. Pembaca DOM juga diuji read-only pada halaman Brit On group 753 dan mendeteksi lima slot kosong. Instalasi serta alur Playwright login/fill/submit menyeluruh belum diuji; tes unit bukan bukti submit langsung berhasil. Simpan briton.py, quiz_checks.py, progress.py, existing_answers.py, dan login_helper.py dalam folder yang sama. Laporan hasil tetap lokal dan diabaikan Git; jangan membagikannya tanpa memeriksa data pribadi.
 
 ## Status aktivitas dan melanjutkan pekerjaan
 
@@ -135,3 +135,40 @@ Jalankan perintah yang sama untuk melanjutkan. Skrip membuka kembali aktivitas d
 Sebelum klik Submit, checkpoint submission_pending disimpan. Jika klik atau feedback gagal, status menjadi submission_unknown. Pada proses berikutnya, jika bukti penilaian terlihat, status diperbarui ke graded dan aktivitas dilewati. Jika belum terlihat, proses berhenti tanpa kirim ulang. Jangan menghapus checkpoint atau mengganti path hanya untuk melewati perlindungan ini; periksa riwayat/nilai pada situs terlebih dahulu. Checkpoint terikat hash seluruh file jawaban: perubahan rencana membutuhkan checkpoint lain setelah memastikan tidak ada pengiriman yang belum pasti.
 
 45 tes unit dan alur dengan browser tiruan lulus, termasuk melewati aktivitas dinilai, membatalkan KIRIM, dry-run, konflik jawaban, dan mencegah pengiriman ulang setelah klik gagal. Snapshot DOM nyata group 753 diuji read-only: lima slot kosong dan tombol Submit masih terlihat. Ini bukan pengujian end-to-end Playwright; tidak ada jawaban atau Submit yang dikirim ke Brit On selama pengembangan fitur resume.
+
+## Login otomatis dari konfigurasi lokal
+
+Skrip tidak berisi kredensial bawaan. Isi akunmu sekali di file lokal, bukan di chat atau repository. File default berada di %LOCALAPPDATA%/BritonHelper/credentials.json, di luar folder Git. File ini berupa teks biasa, bukan penyimpanan terenkripsi: batasi aksesnya dan jangan bagikan atau sinkronkan folder tersebut.
+
+Untuk membuat salinan template di Windows PowerShell tanpa menimpa file yang sudah ada:
+
+    New-Item -ItemType Directory -Force "$env:LOCALAPPDATA\BritonHelper" | Out-Null
+    $cred = "$env:LOCALAPPDATA\BritonHelper\credentials.json"
+    if (!(Test-Path $cred)) { Copy-Item config/credentials.example.json $cred }
+    notepad $cred
+
+Di editor lokal, ganti ISI_EMAIL_ANDA dan ISI_PASSWORD_ANDA dengan akunmu, lalu simpan. File harus punya dua field JSON saja: email dan password. Password yang mengandung kutip atau backslash harus memakai escape JSON yang sesuai. Jangan kirim isi file itu ke chat, issue, commit, atau screenshot.
+
+Jalankan:
+
+    python briton.py login
+
+Urutan sumber kredensial: pasangan variabel lingkungan BRITON_EMAIL + BRITON_PASSWORD lebih dahulu, lalu --credentials-file, lalu BRITON_CREDENTIALS_FILE, lalu file default. Kedua variabel akun harus terisi berpasangan. Jangan menaruh password di argumen command line atau riwayat PowerShell. File .env tidak dibaca otomatis; variabel di sini berarti environment proses/OS.
+
+Path khusus, tanpa kredensial pada command line:
+
+    python briton.py --credentials-file "C:/path-pribadi/credentials.json" login
+
+Jika sesi masih aktif, skrip memakainya tanpa membaca password atau mencoba login lagi. Perintah scan, capture, dan apply juga mencoba login otomatis jika diarahkan ke halaman login, lalu membuka kembali aktivitas yang dituju. Akun yang aktif mengikuti profil browser lokal; jika kamu berganti akun, gunakan profil browser terpisah dengan --profile agar tidak tertukar.
+
+Tanpa konfigurasi, perintah login tetap menawarkan login manual. Untuk memaksa manual dan mengabaikan file/variabel akun:
+
+    python briton.py login --manual
+
+Login otomatis dilakukan satu kali melalui form situs HTTPS learn.onbriton.com. Tujuan form diperiksa sebelum pengisian. Jika login gagal, struktur berubah, atau ada langkah verifikasi tambahan, proses berhenti tanpa loop mencoba password. Pesan error disanitasi dan halaman login tidak discreenshot oleh penanganan error utama. Profil browser menyimpan sesi secara lokal; jangan bagikan profil itu.
+
+Pengujian login menggunakan kredensial fiktif dan browser tiruan, bukan akun nyata. Struktur form login publik diperiksa langsung; login dengan password asli belum diuji. Semua tes dapat dijalankan dengan:
+
+    python -m unittest -v test_quiz_checks test_progress test_resume_flow test_login_helper
+
+Pengujian versi login otomatis: 62 tes unit/alur tiruan dan pemeriksaan sintaks Python lulus. Tidak ada password akun asli yang dimasukkan atau dikirim selama pengembangan ini.
