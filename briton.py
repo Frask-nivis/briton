@@ -12,6 +12,7 @@ from playwright.async_api import async_playwright, expect
 from quiz_checks import format_issues, validate_complete, wait_for_feedback, SNAPSHOT_JS
 from progress import Checkpoint, classify, should_block_resume
 from existing_answers import inspect_all, inspect_action
+from login_helper import load_credentials, ensure_signed_in, login_wall, trusted_origin
 
 BASE = 'https://learn.onbriton.com'
 ROOT = Path(__file__).resolve().parent
@@ -41,8 +42,11 @@ async def unique(loc):
 
 async def navigate(page, url):
     await page.goto(valid_url(url), wait_until='domcontentloaded')
-    if 'login' in page.url.lower() or await page.locator('input[type=password]').count():
-        raise RuntimeError('Sesi belum login. Jalankan perintah login terlebih dahulu.')
+    if await login_wall(page):
+        await ensure_signed_in(page)
+        await page.goto(valid_url(url), wait_until='domcontentloaded')
+        if await login_wall(page):
+            raise RuntimeError('Sesi masih belum login; proses dihentikan tanpa mencoba ulang.')
     await expect(page.locator('body')).to_be_visible()
 
 
@@ -227,8 +231,10 @@ async def apply_plan(page, filename, submit, allow_retry, checkpoint_path=None, 
 async def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument('--profile', default=str(Path(os.environ.get('LOCALAPPDATA', str(Path.home()))) / 'BritonHelper' / 'browser-profile'))
+    ap.add_argument('--credentials-file', help='File JSON kredensial lokal; jangan commit file ini')
     sub = ap.add_subparsers(dest='command', required=True)
-    sub.add_parser('login')
+    login = sub.add_parser('login')
+    login.add_argument('--manual', action='store_true', help='Login sendiri tanpa membaca kredensial otomatis')
     scan = sub.add_parser('scan'); scan.add_argument('--url', required=True); scan.add_argument('--out', default='activities.json')
     cap = sub.add_parser('capture'); cap.add_argument('--url', required=True); cap.add_argument('--out', default='questions.json')
     run = sub.add_parser('apply'); run.add_argument('plan'); run.add_argument('--submit', action='store_true'); run.add_argument('--allow-retry', action='store_true')
@@ -237,6 +243,8 @@ async def main():
     args = ap.parse_args()
     if args.command == 'apply' and args.status_only and args.submit:
         ap.error('--status-only tidak boleh digabung --submit')
+    if args.credentials_file:
+        os.environ['BRITON_CREDENTIALS_FILE'] = str(Path(args.credentials_file).expanduser())
     async with async_playwright() as pw:
         context = await pw.chromium.launch_persistent_context(args.profile, headless=False, viewport={'width':1360,'height':900})
         # Keep audio/video and JavaScript: necessary for listening and interactive quizzes.
@@ -245,15 +253,24 @@ async def main():
         try:
             if args.command == 'login':
                 await page.goto(BASE + '/dashboard', wait_until='domcontentloaded')
-                await asyncio.to_thread(input, 'Login sendiri di browser. Setelah dashboard muncul, tekan Enter... ')
-                if urlparse(page.url).netloc != 'learn.onbriton.com' or 'login' in page.url.lower() or await page.locator('input[type=password]').count():
+                if not trusted_origin(page.url):
+                    raise RuntimeError('Halaman login bukan origin Brit On yang diizinkan.')
+                if await login_wall(page):
+                    if not args.manual and load_credentials(args.credentials_file) is not None:
+                        await ensure_signed_in(page, args.credentials_file)
+                        print('Login otomatis berhasil diverifikasi.')
+                    else:
+                        await asyncio.to_thread(input, 'Login sendiri di browser. Setelah dashboard muncul, tekan Enter... ')
+                if not trusted_origin(page.url) or await login_wall(page):
                     raise RuntimeError('Login belum berhasil diverifikasi.')
                 print('Profil browser tersimpan lokal. Jangan dibagikan.')
             elif args.command == 'scan': await inventory(page, args.url, args.out)
             elif args.command == 'capture': await capture(page, args.url, args.out)
             elif args.command == 'apply': await apply_plan(page, args.plan, args.submit, args.allow_retry, args.checkpoint, args.status_only)
         except Exception:
-            await page.screenshot(path=str(ROOT / 'error.png'), full_page=True)
+            # Do not capture filled login forms or credential-related pages.
+            if trusted_origin(page.url) and not await login_wall(page):
+                await page.screenshot(path=str(ROOT / 'error.png'), full_page=True)
             raise
         finally:
             await context.close()
