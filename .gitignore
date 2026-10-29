@@ -23,3 +23,8 @@ test-results/
 
 # Local quiz feedback reports may contain personal course content
 after-submit-*.json
+
+# Private local resume state
+*.checkpoint.json
+*.checkpoint.json.tmp
+checkpoints/
