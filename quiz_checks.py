@@ -63,6 +63,7 @@ def completeness_errors(snapshot):
 SNAPSHOT_JS = r'''form => {
   const visible = e => !!e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden';
   return {
+    can_submit:Array.from(form.querySelectorAll('button')).some(e=>visible(e) && /^submit$/i.test(e.innerText.trim())),
     controls: Array.from(form.querySelectorAll('input:not([type=hidden]),select,textarea')).map(e => ({
       tag:e.tagName, type:e.type, name:e.name, id:e.id, visible:visible(e),
       disabled:e.matches(':disabled'), required:e.required, checked:e.checked,
@@ -71,6 +72,7 @@ SNAPSHOT_JS = r'''form => {
         value:o.value, placeholder:o.disabled || o.hidden || !o.text.trim() || /^(select an answer|choose(?: an? (?:answer|option))?|pilih(?: jawaban)?)$/i.test(o.text.trim())
       })) : []
     })),
+    total_slots:Array.from(form.querySelectorAll('.LS-lesson-drop-match-content,.LS-lesson-drop-category-content')).filter(visible).length,
     empty_slots:Array.from(form.querySelectorAll('.LS-lesson-drop-match-content,.LS-lesson-drop-category-content'))
       .filter(e=>visible(e) && !e.querySelector('.LS-lesson-drag-item,.LS-lesson-drag-match-wrapper')).length
   };
